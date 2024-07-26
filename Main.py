@@ -5,6 +5,7 @@ import pyttsx3
 import requests
 import datetime
 
+
 # загрузка переменных окружения из .env файла
 load_dotenv()
 
