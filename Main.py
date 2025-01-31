@@ -1,81 +1,92 @@
-import os
-from dotenv import load_dotenv
-import speech_recognition as sr
-import pyttsx3
-import requests
-import datetime
+import config
+import time
+from speech import speak, listen
+import commands
+import threading
 
+# Флаг активности
+is_active = False
 
-# загрузка переменных окружения из .env файла
-load_dotenv()
+def listen_for_commands():
+    global is_active
+    while is_active:
+        print("Слушаю команды...")  # Отладочный вывод
+        command = listen()  # Слушает команды
+        print(f"Слышал команду: {command}")  # Отладочный вывод
 
-# получение API ключа из переменных окружения
-api_key = os.getenv("OPENWEATHER_API_KEY")
+        if command:
+            print(f"Команда: {command}")  # Отладочный вывод
 
-# инициализация голосового движка
-engine = pyttsx3.init()
+            if 'время' in command:
+                print("Распознана команда: время")  # Отладочный вывод
+                commands.get_time()
 
-# настройка параметров голоса
-voices = engine.getProperty('voices')
-engine.setProperty('voice', voices[0].id)  # Используем первый доступный голос
-engine.setProperty('rate', 200)  # Скорость речи
+            elif 'погода' in command:
+                print("Распознана команда: погода")  # Отладочный вывод
+                speak("Назовите город.")
+                city = listen()
+                if city:
+                    commands.get_weather(city)
 
-# функции для синтеза и распознавания речи
-def speak(text):
-    engine.say(text)
-    engine.runAndWait()
+            elif 'выход' in command or 'стоп' in command:
+                speak("До свидания!")
+                is_active = False  # Завершает программу
 
-def listen():
-    recognizer = sr.Recognizer()
-    with sr.Microphone() as source:
-        print("Слушаю...")
-        audio = recognizer.listen(source)
-    try:
-        command = recognizer.recognize_google(audio, language='ru-RU')
-        print(f"Вы сказали: {command}")
-        return command.lower()
-    except sr.UnknownValueError:
-        speak("Извините, я не понял, что вы сказали.")
-        return ""
-    except sr.RequestError:
-        speak("Ошибка сервиса распознавания речи.")
-        return ""
+            elif 'будильник' in command:
+                speak("На какое время установить будильник? Формат: часы и минуты.")
+                alarm_time = listen()
+                if alarm_time:
+                    commands.set_alarm(alarm_time)
 
-# голосовые команды
-def get_time():
-    now = datetime.datetime.now()
-    current_time = now.strftime("%H:%M")
-    speak(f"Сейчас {current_time}")
+            elif 'ожидай' in command:
+                speak("Ожидаю.")  # Подтверждает, что ассистент в режиме ожидания
+                is_active = False  # Ожидает нового активационного слова
+                return  # Завершает только текущий цикл прослушивания команд
 
-def get_weather(city):
-    base_url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric&lang=ru"
-    response = requests.get(base_url)
-    data = response.json()
-    if data["cod"] != "404":
-        main = data["main"]
-        weather_description = data["weather"][0]["description"]
-        temperature = main["temp"]
-        speak(f"В городе {city} сейчас {temperature} градусов Цельсия, {weather_description}.")
-    else:
-        speak("Город не найден.")
+            elif 'команды' in command:
+                print("Распознана команда: команды")  # Отладочный вывод
+                commands.show_hints()
+
+            else:
+                speak("Извините, я не знаю такой команды.")
+
+        else:
+            print("Не удалось распознать команду, продолжаю ожидание...")
+
+    print("Завершаю прослушивание команд...")
+
+# Поток для прослушивания активационной фразы
+def listen_for_activation():
+    global is_active
+    while True:
+        print("Ожидаю активацию...")  # Отладочный вывод
+        command = listen()  # Слушает активационную фразу
+        print(f"Слушаем для активации: {command}")  # Отладочный вывод
+
+        if command:  # Проверяет, что команда распознана
+            if config.KEY_PHRASE.lower() in command.lower():  # Если распознана активационная фраза
+                print(f"Активирована фраза: {config.KEY_PHRASE}")
+                speak(f"Я вас слушаю.")
+                is_active = True  # Переключает флаг на активное состояние
+                print("Активировано! Перехожу к прослушиванию команд.")  # Вывод для отладки
+                listen_for_commands()  # Переход к прослушиванию команд
+
+        time.sleep(1)  # Повторное слушание через 1 секунду
 
 def greet():
-    speak("Запуск. Выбери команду: время или погода. Для отключения произнеси - выход")
+    """Приветствие ассистента"""
+    speak(f"Здравствуйте, я {config.KEY_PHRASE}. Я готов помочь.")
+    speak(f"Для получения помощи скажите 'Подсказки' после обращение ко мне командой {config.KEY_PHRASE}.")
 
-# основной цикл
+def run_alarm_check():
+    """Запуск проверки будильников в фоновом потоке"""
+    from alarm import check_alarms
+    threading.Thread(target=check_alarms, daemon=True).start()  # Запускает проверку будильников в фоновом потоке
+
 if __name__ == "__main__":
     greet()
-    while True:
-        command = listen()
-        if 'время' in command:
-            get_time()
-        elif 'погода' in command:
-            speak("Назовите город.")
-            city = listen()
-            if city:
-                get_weather(city)
-        elif 'выход' in command or 'стоп' in command:
-            speak("До свидания!")
-            break
-        else:
-            speak("Извините, я не знаю такой команды.")
+
+    run_alarm_check()  # Запускает фоновую проверку будильников
+
+    # Запуск потока для активационной фразы
+    listen_for_activation()  # Теперь этот поток сразу активирует прослушивание команд
